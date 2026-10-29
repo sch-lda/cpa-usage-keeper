@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       backend: ${{ (github.event_name == 'workflow_dispatch' || inputs.full) && 'true' || steps.filter.outputs.backend }}
@@ -109,7 +109,7 @@ jobs:
       fail-fast: false
       matrix:
         runs-on:
-          - ubuntu-26.04
+          - ubuntu-latest
           - macos-15
           - windows-2025
     steps:
@@ -145,7 +145,7 @@ jobs:
   frontend:
     needs: changes
     if: ${{ needs.changes.outputs.frontend == 'true' || needs.changes.outputs.other == 'true' }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout repository
@@ -177,7 +177,7 @@ jobs:
   container:
     needs: changes
     if: ${{ needs.changes.outputs.container == 'true' }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout repository
@@ -197,7 +197,7 @@ jobs:
       - backend
       - frontend
       - container
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Verify CI results
