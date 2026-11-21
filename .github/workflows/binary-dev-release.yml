@@ -4,71 +4,48 @@ on:
   workflow_dispatch:
     inputs:
       specific_name:
-        description: 'Optional binary package name suffix; defaults to the current branch name, for example pr-123 or feature-login-test'
+        description: 'Optional dev release suffix. With no suffix, main publishes to dev and other branches to dev-<branch>.'
         required: false
         type: string
 
+concurrency:
+  group: cpa-usage-keeper-dev-release
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  resolve-dev-name:
+  binary-dev-linux:
     runs-on: ubuntu-24.04
-    outputs:
-      specific_name: ${{ steps.dev_name.outputs.specific_name }}
     steps:
-      - name: Validate branch ref
-        if: ${{ !startsWith(github.ref, 'refs/heads/') }}
-        run: |
-          echo "Manual dev binary publishing must be run from a branch." >&2
-          echo "Current ref: $GITHUB_REF" >&2
-          exit 1
-
-      - name: Resolve specific binary package name
-        id: dev_name
+      - name: Resolve dev release tag
+        id: release
         env:
           INPUT_NAME: ${{ inputs.specific_name }}
         run: |
-          raw_name="${INPUT_NAME:-$GITHUB_REF_NAME}"
-          specific_name=$(printf '%s' "$raw_name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^[^a-z0-9]+//; s/[._-]+$//' | cut -c1-96)
-
-          if [[ -z "$INPUT_NAME" ]]; then
-            case "$specific_name" in
-              dev|latest|sha-*)
-                specific_name=$(printf '%s-%s' "$specific_name" "${GITHUB_SHA::7}" | cut -c1-96)
-                ;;
-            esac
-          fi
-
-          if [[ ! "$specific_name" =~ ^[a-z0-9][a-z0-9._-]{0,95}$ ]]; then
-            echo "Unable to generate a valid binary package name from: $raw_name" >&2
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != refs/heads/* ]]; then
+            echo "Manual dev publishing requires a branch: $GITHUB_REF" >&2
             exit 1
           fi
 
-          case "$specific_name" in
-            dev|latest|sha-*)
-              echo "Invalid binary package name: $specific_name is reserved." >&2
+          tag=dev
+          if [[ "$GITHUB_REF_NAME" != main || -n "$INPUT_NAME" ]]; then
+            label=${INPUT_NAME:-$GITHUB_REF_NAME}
+            suffix=$(printf '%s' "$label" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//' | cut -c1-90 | sed -E 's/-+$//')
+            if [[ -z "$suffix" ]]; then
+              echo 'The dev release suffix must contain a letter or number.' >&2
               exit 1
-              ;;
-          esac
+            fi
+            tag="dev-$suffix"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-          echo "specific_name=$specific_name" >> "$GITHUB_OUTPUT"
-          echo "Using specific binary package name: $specific_name"
-
-  binary-dev-linux:
-    runs-on: ubuntu-24.04
-    needs: resolve-dev-name
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            cc: gcc
-            asset_arch: amd64
-    steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -96,54 +73,56 @@ jobs:
 
       - name: Build binary package
         env:
-          PACKAGE_SUFFIX: ${{ needs.resolve-dev-name.outputs.specific_name }}
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CC: ${{ matrix.cc }}
-          ASSET_ARCH: ${{ matrix.asset_arch }}
+          GOOS: linux
+          GOARCH: amd64
+          GOAMD64: v1
+          CGO_ENABLED: '1'
+          CC: gcc
+          CGO_CFLAGS: '-O2 -g -march=x86-64 -mtune=generic'
         run: |
           set -euo pipefail
-          package_name="cpa-usage-keeper_dev_${PACKAGE_SUFFIX}_${GITHUB_SHA::7}_${GOOS}_${ASSET_ARCH}"
-          package_dir="dist/${package_name}"
-          mkdir -p "${package_dir}/data"
+          package_name=cpa-usage-keeper_linux_amd64
+          package_dir="dist/$package_name"
+          mkdir -p "$package_dir/data"
 
-          CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" CC="${CC}" \
-            go build -trimpath -ldflags="-s -w" -o "${package_dir}/cpa-usage-keeper" ./cmd/server/main.go
-          cp .env.example README.md README.zh.md LICENSE "${package_dir}/"
-          cp -R docs "${package_dir}/"
-          cp deploy/cpa-usage-keeper.example.service "${package_dir}/cpa-usage-keeper.service"
-          (cd dist && zip -qr "${package_name}.zip" "${package_name}")
+          go build -trimpath -ldflags="-s -w" -o "$package_dir/cpa-usage-keeper" ./cmd/server/main.go
+          elf_notes=$(readelf -n "$package_dir/cpa-usage-keeper")
+          if grep -Eq 'x86 ISA needed:.*x86-64-v[234]' <<< "$elf_notes"; then
+            echo 'The Linux amd64 binary requires a newer x86-64 ISA than baseline.' >&2
+            exit 1
+          fi
 
-      - name: Upload binary package artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: cpa-usage-keeper-dev-${{ needs.resolve-dev-name.outputs.specific_name }}-${{ matrix.goos }}-${{ matrix.asset_arch }}
-          path: dist/cpa-usage-keeper_dev_${{ needs.resolve-dev-name.outputs.specific_name }}_*_${{ matrix.goos }}_${{ matrix.asset_arch }}.zip
-          if-no-files-found: error
-
-  publish-dev-artifacts:
-    runs-on: ubuntu-24.04
-    needs:
-      - resolve-dev-name
-      - binary-dev-linux
-    steps:
-      - name: Download binary package artifacts
-        uses: actions/download-artifact@v6
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
+          cp .env.example README.md README.zh.md LICENSE "$package_dir/"
+          cp -R docs "$package_dir/"
+          cp deploy/cpa-usage-keeper.example.service "$package_dir/cpa-usage-keeper.service"
           cd dist
-          sha256sum *.zip > checksums.txt
+          zip -qr "$package_name.zip" "$package_name"
+          sha256sum "$package_name.zip" > checksums.txt
 
-      - name: Upload dev binary packages
-        uses: actions/upload-artifact@v6
-        with:
-          name: cpa-usage-keeper-dev-binaries-${{ github.run_id }}
-          path: |
-            dist/*.zip
-            dist/checksums.txt
-          if-no-files-found: error
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          title="Development build ($RELEASE_TAG)"
+          notes=$(printf 'Linux amd64 build from %s at %s.\n\n[Build run](%s/%s/actions/runs/%s)\n' \
+            "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID")
+          assets=(dist/cpa-usage-keeper_linux_amd64.zip dist/checksums.txt)
+
+          if prerelease=$(gh release view "$RELEASE_TAG" --json isPrerelease --jq .isPrerelease); then
+            if [[ "$prerelease" != true ]]; then
+              echo "Refusing to replace a non-development release: $RELEASE_TAG" >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$RELEASE_TAG" \
+              -f sha="$GITHUB_SHA" -F force=true --silent
+            gh release edit "$RELEASE_TAG" --title "$title" --notes "$notes" --prerelease --latest=false
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" --target "$GITHUB_SHA" \
+              --title "$title" --notes "$notes" --prerelease --latest=false
+          fi
+
+          printf '[Download Linux amd64 ZIP](%s/%s/releases/download/%s/cpa-usage-keeper_linux_amd64.zip)\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$RELEASE_TAG" >> "$GITHUB_STEP_SUMMARY"
