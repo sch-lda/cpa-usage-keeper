@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import { CredentialsSection, CredentialQuotaPanel, INSPECTION_RESULT_PAGE_SIZE_OPTIONS, QuotaAutoRefreshSettingsModal, QuotaInspectionModal, buildInspectionResultsPage, buildInvalidInspectionAccountFileNames, buildQuotaAutoRefreshSettings, formatInspectionCompletedAt, formatInspectionProgressPercent, formatQuotaErrorDisplay, formatQuotaResetDuration, formatQuotaResetLabel, formatQuotaWindowUsageAriaLabel, inspectionIndicatorTone, invertInvalidInspectionAccountFileNames, isAutoRefreshSettingsControlDisabled, isAutoRefreshSettingsSaveDisabled, isInspectionStartDisabled, isQuotaInspectionCloseDisabled, isSelectableInspectionStatusFilter, nextInspectionResultStatusFilter, persistCredentialDisplayMode, readStoredCredentialDisplayMode, resolveQuotaAutoRefreshSettingsLoadFailure, selectAllInvalidInspectionAccountFileNames } from '../CredentialsSection'
+import { CredentialsSection, CredentialQuotaPanel, INSPECTION_RESULT_PAGE_SIZE_OPTIONS, QuotaAutoRefreshSettingsModal, QuotaInspectionModal, buildInspectionResultsPage, buildInvalidInspectionAccountFileNames, buildQuotaAutoRefreshSettings, formatInspectionCompletedAt, formatInspectionProgressPercent, formatQuotaErrorDisplay, formatQuotaResetDuration, formatQuotaResetLabel, formatQuotaWindowUsageAriaLabel, inspectionIndicatorTone, invertInvalidInspectionAccountFileNames, isAutoRefreshSettingsControlDisabled, isAutoRefreshSettingsSaveDisabled, isInspectionStartDisabled, isQuotaInspectionCloseDisabled, isSelectableInspectionStatusFilter, nextInspectionResultStatusFilter, resolveQuotaAutoRefreshSettingsLoadFailure, selectAllInvalidInspectionAccountFileNames } from '../CredentialsSection'
 import { createCredentialSectionProps } from './credentialSectionFixtures'
 import type { CredentialRow, DisplayQuota } from '../credentialViewModels'
 import type { UsageQuotaInspectionResult, UsageQuotaInspectionResultStatus } from '@/lib/types'
@@ -89,7 +89,7 @@ describe('CredentialsSection account details and metrics', () => {
     expect(html).not.toContain('data-kimi-site="international"')
   })
 
-  it('renders the 5h cache rate in health mode', () => {
+  it('shows health and quota together despite the legacy health-only preference', () => {
     const storage = new Map<string, string>([['cpa.credentials.displayMode', 'health']])
     vi.stubGlobal('window', {
       matchMedia: () => ({ matches: false }),
@@ -120,18 +120,36 @@ describe('CredentialsSection account details and metrics', () => {
           cache_read_tokens: 300,
           buckets: [],
         },
+        displayQuotas: [{
+          key: 'rate_limit.primary_window', label: '5h', percent: 25, barPercent: 75,
+          percentKind: 'used', status: 'ok', windowUsage: { tokens: '1.00M', cost: '$2.50' },
+        }],
       })
 
       const html = renderToStaticMarkup(createElement(CredentialsSection, createCredentialSectionProps({ rows: [row], total: 1 })))
 
-      expect(html).toContain('usage_stats.credentials_health_cache_rate_5h')
+      expect(html).toContain('1.00M')
+      expect(html).toContain('$2.50')
+      expect(html).toContain('usage_stats.credentials_health_cache_short')
       expect(html).toContain('37.50%')
-      expect(html).toContain('05/10 10:00')
-      expect(html).toContain('05/10 10:02')
-      expect(html).not.toContain('usage_stats.credentials_quota_usage_mode_label')
+      expect(html).toContain('usage_stats.credentials_last_used')
+      expect(html).toContain('usage_stats.credentials_quota_usage_mode_label')
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  it.each([false, true])('shows the Muse brand for a Meta credential with disabled=%s', (disabled) => {
+    const row = createRow({
+      identity: { id: 'meta-1', identity: 'meta-auth', type: 'meta', provider: 'meta', is_deleted: false, disabled },
+      displayName: 'My Meta account',
+    })
+    const html = renderToStaticMarkup(createElement(CredentialsSection, createCredentialSectionProps({ rows: [row], total: 1 })))
+
+    expect(html).toContain('data-provider-brand-icon="muse"')
+    expect(html).not.toContain('data-provider-brand-icon="meta"')
+    expect(html).toContain('My Meta account')
+    expect(html).toContain(`data-credential-status-disabled="${disabled}"`)
   })
 
   it('renders credential metrics and status controls', () => {
@@ -149,8 +167,8 @@ describe('CredentialsSection account details and metrics', () => {
 
     const html = renderToStaticMarkup(createElement(CredentialsSection, createCredentialSectionProps({ rows: [row], total: 1 })))
 
-    expect(html).toContain('usage_stats.credentials_column_name')
-    expect(html).toContain('usage_stats.credentials_column_quota')
+    expect(html).toContain('data-credential-card="true"')
+    expect(html).toContain('data-credential-health-variant="compact"')
     expect(html).toContain('usage_stats.credentials_quota_usage_mode_label')
     expect(html).toContain('1.23K')
     expect(html).toContain('97.24%')
@@ -213,7 +231,7 @@ describe('CredentialsSection quota reset action', () => {
     expect(resetButton(html)).toContain('aria-haspopup="dialog"')
     expect(resetButton(html)).toContain('aria-busy="true"')
     expect(resetButton(html)).toContain('disabled=""')
-    expect(html).toContain('credentialRowRefreshButton')
+    expect(html).toContain('aria-label="usage_stats.credentials_refresh_single::"')
   })
 
   it('disables reset for deleted or refreshing rows', () => {
@@ -226,33 +244,6 @@ describe('CredentialsSection quota reset action', () => {
 
       expect(resetButton(html)).toContain('aria-haspopup="dialog"')
       expect(resetButton(html)).toContain('disabled=""')
-    }
-  })
-})
-
-describe('CredentialsSection display mode persistence', () => {
-  it('stores and restores the Credentials quota or health display mode', () => {
-    const storage = new Map<string, string>()
-    const localStorage = {
-      getItem: vi.fn((key: string) => storage.get(key) ?? null),
-      setItem: vi.fn((key: string, value: string) => {
-        storage.set(key, value)
-      }),
-    }
-    vi.stubGlobal('window', { localStorage })
-    try {
-      expect(readStoredCredentialDisplayMode()).toBe('quota')
-
-      persistCredentialDisplayMode('health')
-
-      expect(localStorage.setItem).toHaveBeenCalledWith('cpa.credentials.displayMode', 'health')
-      expect(readStoredCredentialDisplayMode()).toBe('health')
-
-      storage.set('cpa.credentials.displayMode', 'unexpected')
-
-      expect(readStoredCredentialDisplayMode()).toBe('quota')
-    } finally {
-      vi.unstubAllGlobals()
     }
   })
 })
@@ -305,6 +296,24 @@ describe('CredentialsSection quota usage mode rendering', () => {
 
     expect(estimatedHtml).toContain('1.00M')
     expect(estimatedHtml).toContain('$2.50')
+  })
+
+  it('keeps Meta quota identical in current and estimated modes without fabricated metrics', () => {
+    const metaRow = createRow({
+      identity: { id: 'meta', identity: 'meta-auth', type: 'meta', provider: 'meta', is_deleted: false },
+      displayQuotas: [{ key: 'meta.window', label: 'Current', scope: 'meta_window', percent: 25, barPercent: 75, percentKind: 'used', status: 'ok' }],
+    })
+    const current = renderToStaticMarkup(createElement(CredentialQuotaPanel, { row: metaRow, quotaUsageMode: 'current' }))
+    const estimated = renderToStaticMarkup(createElement(CredentialQuotaPanel, { row: metaRow, quotaUsageMode: 'estimated' }))
+    expect(current).toBe(estimated)
+    expect(current).toContain('Current')
+    expect(current).toContain('75%')
+    expect(current).not.toContain('credentials_quota_window_usage_aria')
+
+    const renderState = (overrides: Partial<CredentialRow>) => renderToStaticMarkup(createElement(CredentialQuotaPanel, { row: { ...metaRow, ...overrides }, quotaUsageMode: 'current' }))
+    expect(renderState({ displayQuotas: [] })).toContain('usage_stats.credentials_quota_unavailable')
+    expect(renderState({ quotaLoading: true })).toContain('usage_stats.credentials_quota_loading')
+    expect(renderState({ quotaError: 'HTTP 401' })).toContain('401')
   })
 
   it('renders each canonical Antigravity group once above its window bars', () => {
@@ -686,6 +695,19 @@ describe('CredentialsSection inspection results', () => {
     type: 'codex',
     status,
     refreshed_at: `2026-06-03T10:${String(index).padStart(2, '0')}:00Z`,
+  })
+
+  it('uses the Muse icon for Meta authentication-file inspection results without changing their names', () => {
+    const result = { ...makeInspectionResult(1), type: 'meta', name: 'My Meta account' }
+    const html = renderToStaticMarkup(createElement(QuotaInspectionModal, {
+      open: true,
+      status: { total: 1, cached: 1, running: false, completed: true, normal: 1, limit_reached: 0, unauthorized_401: 0, payment_required_402: 0, unauthorized_401_402: 0, other_failed: 0, unknown: 0, results: [result] },
+      loading: false, starting: false, error: '',
+      onClose: () => undefined, onStart: async () => undefined, onRefreshStatus: async () => undefined,
+    }))
+    expect(html).toContain('data-provider-brand-icon="muse"')
+    expect(html).not.toContain('data-provider-brand-icon="meta"')
+    expect(html).toContain('My Meta account')
   })
 
   it('paginates inspection results with the selectable page sizes instead of a fixed eight rows', () => {
