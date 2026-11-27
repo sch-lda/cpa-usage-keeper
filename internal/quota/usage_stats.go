@@ -100,7 +100,7 @@ func (s *Service) attachWindowUsageStatsWithProvider(ctx context.Context, authIn
 		// provider pair 不完整时先丢弃单边字段，避免 fallback 失败后输出不同口径的半套数据。
 		response.Quota[index].WindowUsageTokens = nil
 		response.Quota[index].WindowUsageCost = nil
-		// 根据 reset_at 和 window.seconds 计算该 row 对应的统计窗口。
+		// 根据重置时间和周期计算该 row 对应的统计窗口。
 		windowStart, windowEnd, ok := quotaRowUsageWindow(response.Quota[index], now)
 		// 没有明确窗口或 reset_at 无法解析时跳过该 row。
 		if !ok {
@@ -204,6 +204,9 @@ func shouldBackfillWindowUsageStats(row QuotaRow) bool {
 	if !ordinaryWindow && !isXAIWeeklyUsageWindowQuotaRow(row) {
 		return false
 	}
+	if isCalendarMonthQuotaWindow(row.Window) {
+		return true
+	}
 	if row.Window == nil || row.Window.Seconds == nil {
 		return false
 	}
@@ -215,9 +218,13 @@ func shouldBackfillWindowUsageStats(row QuotaRow) bool {
 	}
 }
 
+func isCalendarMonthQuotaWindow(window *QuotaWindow) bool {
+	return window != nil && window.Unit == "month" && window.Duration != nil && *window.Duration == 1
+}
+
 func quotaRowUsageWindow(row QuotaRow, now time.Time) (time.Time, time.Time, bool) {
-	// window.seconds 是计算窗口起点的必要条件，没有明确窗口长度就不能补 token/cost。
-	if row.Window == nil || row.Window.Seconds == nil || *row.Window.Seconds <= 0 {
+	calendarMonth := isCalendarMonthQuotaWindow(row.Window)
+	if !calendarMonth && (row.Window == nil || row.Window.Seconds == nil || *row.Window.Seconds <= 0) {
 		// 返回 false 表示该 row 不参与窗口 token/cost 计算。
 		return time.Time{}, time.Time{}, false
 	}
@@ -243,8 +250,16 @@ func quotaRowUsageWindow(row QuotaRow, now time.Time) (time.Time, time.Time, boo
 		// 既没有 reset_at 也没有 reset_after_seconds 时无法定位窗口结束点。
 		return time.Time{}, time.Time{}, false
 	}
-	// windowStart 是 reset_at 往前减去明确窗口秒数。
-	windowStart := resetAt.Add(-time.Duration(*row.Window.Seconds) * time.Second)
+	var windowStart time.Time
+	if calendarMonth {
+		// 上游只给出下次续费时间。按 UTC 回推一个月，前一月没有同日时取月末。
+		reset := resetAt.UTC()
+		lastDay := time.Date(reset.Year(), reset.Month(), 0, 0, 0, 0, 0, time.UTC)
+		windowStart = time.Date(lastDay.Year(), lastDay.Month(), min(reset.Day(), lastDay.Day()),
+			reset.Hour(), reset.Minute(), reset.Second(), reset.Nanosecond(), time.UTC)
+	} else {
+		windowStart = resetAt.Add(-time.Duration(*row.Window.Seconds) * time.Second)
+	}
 	// 当前时间早于 reset_at 时，窗口还没结束，查询终点用 now 避免扫描未来空小时。
 	if now.Before(resetAt) {
 		// 返回 [windowStart, now) 作为当前窗口统计范围。

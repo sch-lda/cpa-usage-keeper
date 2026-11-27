@@ -42,8 +42,13 @@ func (p openCodeGoProvider) Check(ctx context.Context, input ProviderInput) (Pro
 		}
 	}
 	rows := make(openCodeGoQuotaRows, 0, 3)
-	for _, window := range []struct{ name, label string }{
-		{"rolling", "5h"}, {"weekly", "Weekly"}, {"monthly", "Monthly"},
+	for _, window := range []struct {
+		name, label string
+		period      QuotaWindow
+	}{
+		{"rolling", "5h", QuotaWindow{Seconds: intPtr(quotaWindowFiveHourSeconds)}},
+		{"weekly", "Weekly", QuotaWindow{Seconds: intPtr(quotaWindowSevenDaySeconds)}},
+		{"monthly", "Monthly", QuotaWindow{Duration: floatPtr(1), Unit: "month"}},
 	} {
 		bucket, ok := buckets[window.name]
 		if !ok {
@@ -52,7 +57,9 @@ func (p openCodeGoProvider) Check(ctx context.Context, input ProviderInput) (Pro
 		rows = append(rows, QuotaRow{
 			Key:         "opencode_go." + window.name,
 			Label:       window.label,
+			Scope:       "window",
 			UsedPercent: floatPtr((1 - *bucket.RemainingFraction) * 100),
+			Window:      &window.period,
 			ResetAt:     bucket.ResetTime,
 		})
 	}
