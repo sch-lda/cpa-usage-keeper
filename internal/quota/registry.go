@@ -9,16 +9,17 @@ type ProviderRegistry struct {
 func NewDefaultProviderRegistry(caller ManagementClient, configs ProviderConfigs) ProviderRegistry {
 	kimi := NewKimiProvider(caller, configs.Kimi, configs.KimiAI)
 	return NewProviderRegistry(map[string]ProviderHandler{
-		"antigravity": NewAntigravityProvider(caller, configs.Antigravity, configs.AntigravitySubscriptions),
-		"codex":       NewCodexProvider(caller, configs.Codex),
-		"gemini-cli":  NewGeminiCLIProvider(caller, configs.GeminiCLI, configs.GeminiCLICodeAssist),
-		"claude":      NewClaudeProvider(caller, configs.ClaudeUsage, configs.ClaudeProfile),
-		"kimi":        kimi,
-		"kimi-ai":     kimi,
-		"kimi.ai":     kimi,
-		"kimi.com":    kimi,
-		"meta":        NewMetaProvider(caller),
-		"xai":         NewXAIProvider(caller, configs.XAIWeekly, configs.XAIMonthly),
+		"antigravity":        NewAntigravityProvider(caller, configs.Antigravity, configs.AntigravitySubscriptions),
+		"codex":              NewCodexProvider(caller, configs.Codex),
+		"gemini-cli":         NewGeminiCLIProvider(caller, configs.GeminiCLI, configs.GeminiCLICodeAssist),
+		"claude":             NewClaudeProvider(caller, configs.ClaudeUsage, configs.ClaudeProfile),
+		"kimi":               kimi,
+		"kimi-ai":            kimi,
+		"kimi.ai":            kimi,
+		"kimi.com":           kimi,
+		"meta":               NewMetaProvider(caller),
+		openCodeGoProviderID: openCodeGoProvider{caller: caller},
+		"xai":                NewXAIProvider(caller, configs.XAIWeekly, configs.XAIMonthly),
 	})
 }
 

@@ -501,6 +501,14 @@ func (c *Client) CallManagementAPI(ctx context.Context, request apicall.Request)
 	return result, nil
 }
 
+func (c *Client) FetchPluginQuota(ctx context.Context, authIndex string) (response.PluginQuota, int, error) {
+	var result response.PluginQuota
+	statusCode, _, err := c.doManagementJSONPostRequest(ctx, cpaManagementPluginQuotaEndpoint, struct {
+		AuthIndex string `json:"auth_index"`
+	}{AuthIndex: authIndex}, &result, "plugin quota")
+	return result, statusCode, err
+}
+
 func (c *Client) ResetQuota(ctx context.Context, authIndex string) error {
 	_, _, err := c.doManagementJSONPostRequest(ctx, cpaManagementResetQuotaEndpoint, struct {
 		AuthIndex string `json:"auth_index"`

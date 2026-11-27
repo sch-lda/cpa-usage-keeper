@@ -10,6 +10,7 @@ import (
 
 	"cpa-usage-keeper/internal/cpa/dto/apicall"
 	"cpa-usage-keeper/internal/cpa/dto/credentials"
+	"cpa-usage-keeper/internal/cpa/dto/response"
 )
 
 // UpstreamResponse 是 CPA api-call 返回的上游响应快照；刻意不保存任何请求 Header。
@@ -95,6 +96,14 @@ func (c upstreamResponseRecordingCaller) FetchMetaDCAToken(ctx context.Context, 
 	}
 	// 凭证下载不经过 api-call 响应采集器，也不记录 DCA 请求头。
 	return reader.FetchMetaDCAToken(ctx, name)
+}
+
+func (c upstreamResponseRecordingCaller) FetchPluginQuota(ctx context.Context, authIndex string) (response.PluginQuota, int, error) {
+	reader, ok := c.ManagementClient.(pluginQuotaReader)
+	if !ok {
+		return response.PluginQuota{}, 0, fmt.Errorf("CPA plugin quota reader is unavailable")
+	}
+	return reader.FetchPluginQuota(ctx, authIndex)
 }
 
 func hasUpstreamResponse(response *apicall.Response) bool {

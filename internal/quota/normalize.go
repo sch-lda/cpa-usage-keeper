@@ -66,6 +66,8 @@ func NormalizeQuotaRows(output ProviderOutput) []QuotaRow {
 			return nil
 		}
 		return normalizeMetaQuotaRows(*result)
+	case openCodeGoQuotaRows:
+		return result
 	case XAIResult:
 		return normalizeXAIQuotaRows(result)
 	case *XAIResult:

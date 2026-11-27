@@ -14,6 +14,7 @@ const (
 	cpaManagementOpenAICompatibilityEndpoint = "/v8/management/config/api-keys/openai-compatibility"
 	cpaManagementUsageQueueEndpoint          = "/v8/management/observability/usage/queue"
 	cpaManagementAPICallEndpoint             = "/v8/management/requests/api-call"
+	cpaManagementPluginQuotaEndpoint         = "/v0/management/quota/fetch"
 	cpaManagementResetQuotaEndpoint          = "/v8/management/routing/cooldown/reset"
 	cpaManagementRequestLogByIDEndpoint      = "/v8/management/observability/logs/requests"
 	cpaModelsEndpoint                        = "/v1/models"
